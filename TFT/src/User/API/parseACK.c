@@ -415,9 +415,8 @@ void parseACK(void)
         storeCmd("M115\n");  // as last command to identify the FW type!
       }
 
-      infoHost.tx_slots = DEFAULT_TX_SLOTS;
+      infoHost.tx_slots = infoSettings.tx_slots;
       infoHost.connected = true;
-
       requestCommandInfo.inJson = false;
     }
 
@@ -527,7 +526,7 @@ void parseACK(void)
       if (ack_cache[ack_index] == '\n')
       {
         // ADVANCED_OK not enabled or supported (e.g. not Marlin), 1 buffer just became available
-        infoHost.tx_slots = MIN_TX_SLOTS();
+        infoHost.tx_slots = MIN(infoHost.tx_slots + 1, infoSettings.tx_slots);
 
         goto parse_end;  // there's nothing else to check for
       }
@@ -537,7 +536,7 @@ void parseACK(void)
       {
         // set infoHost.tx_slots also according to ADVANCED_OK feature enabled/disabled on TFT
         infoHost.tx_slots = GET_BIT(infoSettings.general_settings, INDEX_ADVANCED_OK) == 1 ?
-                            ack_value() : MIN_TX_SLOTS();
+                            ack_value() : MIN(infoHost.tx_slots + 1, infoSettings.tx_slots);
 
         goto parse_end;  // there's nothing else to check for
       }
