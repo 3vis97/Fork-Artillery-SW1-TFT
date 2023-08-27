@@ -56,7 +56,7 @@ const int16_t labelVolumeError[3] = {LABEL_TFT_SD_READ_ERROR, LABEL_TFT_USB_READ
 
 static bool list_mode = true;
 
-void normalNameDisp(const GUI_RECT *rect, uint8_t *name)
+void normalNameDisp(const GUI_RECT * rect, uint8_t * name)
 {
   if (name == NULL)
     return;
@@ -84,7 +84,7 @@ void gocdeIconDraw(void)
   {
     curItem.icon = ICON_FOLDER;
     menuDrawItem(&curItem, i);
-    normalNameDisp(&gcodeRect[i], (uint8_t*)getFoldername(baseIndex + i));  // display folder name
+    normalNameDisp(&gcodeRect[i], (uint8_t *)getFoldername(baseIndex + i));  // display folder name
   }
 
   // draw gcode files
@@ -106,7 +106,7 @@ void gocdeIconDraw(void)
     exitFolder();
 
     // display filename hiding filename extension if filename extension feature is disabled
-    normalNameDisp(&gcodeRect[i], (uint8_t*)hideFilenameExtension(baseIndex + i - infoFile.folderCount));
+    normalNameDisp(&gcodeRect[i], (uint8_t *)hideFilenameExtension(baseIndex + i - infoFile.folderCount));
   }
 
   // clear blank icons
@@ -125,7 +125,7 @@ void gocdeListDraw(LISTITEM * item, uint16_t index, uint8_t itemPos)
     item->icon = CHARICON_FOLDER;
     item->itemType = LIST_LABEL;
     item->titlelabel.index = LABEL_DYNAMIC;
-    setDynamicLabel(itemPos, (char*)getFoldername(index));  // display short or long folder name
+    setDynamicLabel(itemPos, (char *)getFoldername(index));  // display short or long folder name
   }
   else if (index < infoFile.folderCount + infoFile.fileCount)  // gcode file
   {
@@ -134,7 +134,7 @@ void gocdeListDraw(LISTITEM * item, uint16_t index, uint8_t itemPos)
     item->titlelabel.index = LABEL_DYNAMIC;
 
     // display short or long filename hiding filename extension if filename extension feature is disabled
-    setDynamicLabel(itemPos, (char*)hideFilenameExtension(index - infoFile.folderCount));
+    setDynamicLabel(itemPos, (char *)hideFilenameExtension(index - infoFile.folderCount));
   }
 }
 
@@ -223,14 +223,14 @@ void menuPrintFromSource(void)
 
     if (list_mode != true)
     {
-      printIconItems.title.address = (uint8_t*)infoFile.path;
+      printIconItems.title.address = (uint8_t *)infoFile.path;
       menuDrawPage(&printIconItems);
     }
   }
   else
   {
     if (infoFile.source == FS_ONBOARD_MEDIA)  // error when the filesystem selected from TFT media not available
-      GUI_DispStringInRect(0, 0, LCD_WIDTH, LCD_HEIGHT, (uint8_t*)requestCommandInfo.cmd_rev_buf);
+      GUI_DispStringInRect(0, 0, LCD_WIDTH, LCD_HEIGHT, (uint8_t *)requestCommandInfo.cmd_rev_buf);
     else
       GUI_DispStringInRect(0, 0, LCD_WIDTH, LCD_HEIGHT, labelVolumeError[infoFile.source]);
 
