@@ -34,6 +34,11 @@ uint8_t cmd_index;
 WRITING_MODE writing_mode = NO_WRITING;
 FIL file;
 
+uint8_t getQueueCount(void)
+{
+  return cmdQueue.count;
+}
+
 bool isPendingCmd(void)
 {
   return (infoHost.tx_count != 0);
