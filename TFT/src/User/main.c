@@ -15,8 +15,27 @@ void InfoHost_Init(bool isConnected)
 
 void InfoHost_HandleOkAck(int16_t tx_slots)
 {
-  if (infoHost.tx_count > 0)
+  if (infoHost.tx_count > 0)  // this check should always be matched unless a bug is present in the TFT code or in the mainboard reply
+  {
     infoHost.tx_count--;
+  }
+  else  // in case of bug, reset infoSettings.tx_slots and infoHost.tx_count to try to avoid a possible TFT freeze
+  {
+  handle_error:
+    #ifdef DEBUG_MONITORING
+      BUZZER_PLAY(SOUND_ERROR);
+
+      char str[100];
+
+      sprintf(str, "tx_slots=%d tx_count=%d", infoHost.tx_slots, infoHost.tx_count);
+      addNotification(DIALOG_TYPE_ERROR, "OK mismatch", str, false);
+    #endif
+
+    infoHost.tx_slots = 1;  // set to 1 just to allow a soft start
+    infoHost.tx_count = 0;
+
+    return;
+  }
 
   // NOTE: the following code always allows to align infoHost.tx_slots even in case of switching ON/OFF
   //       the ADVANCED_OK feature in TFT and/or in case infoHost.tx_slots is beeing also managed by
@@ -29,22 +48,12 @@ void InfoHost_HandleOkAck(int16_t tx_slots)
   // if ADVANCED_OK is enabled in TFT but not in Marlin, use the value for the static ADVANCED_OK provided by TFT
   else if (tx_slots == HOST_SLOTS_REGULAR_OK)
   {
-    // the following check should always be matched unless a bug is present in the code
+    // this check should always be matched unless a bug is present in the TFT code or in the mainboard reply
     if (infoSettings.tx_slots >= infoHost.tx_count)
-    {
       infoHost.tx_slots = infoSettings.tx_slots - infoHost.tx_count;
-    }
     // in case of bug, reset infoSettings.tx_slots and infoHost.tx_count to try to avoid a possible TFT freeze
     else
-    {
-      char str[100];
-
-      sprintf(str, "tx_slots=%d tx_count=%d", infoHost.tx_slots, infoHost.tx_count);
-      addNotification(DIALOG_TYPE_ERROR, "OK mismatch", str, false);
-
-      infoHost.tx_slots = 1;  // set to 1 just to allow a soft start
-      infoHost.tx_count = 0;
-    }
+      goto handle_error;
   }
   // if ADVANCED_OK is enabled in both TFT and Marlin, use the value provided by Marlin
   else if (tx_slots >= 0)
