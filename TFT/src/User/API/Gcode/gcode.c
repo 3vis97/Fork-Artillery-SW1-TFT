@@ -3,7 +3,7 @@
 
 REQUEST_COMMAND_INFO requestCommandInfo = {0};
 
-void waitResponse(void)
+void waitForResponse(void)
 {
   TASK_LOOP_WHILE(!requestCommandInfo.done);
 }
@@ -51,7 +51,7 @@ static void resetRequestCommandInfo(
   if (string_error2)
     requestCommandInfo.error_num = 3;
 
-  TASK_LOOP_WHILE(isNotEmptyCmdQueue());  // wait for the communication to be clean before requestCommand
+  TASK_LOOP_WHILE(isNotEmptyCmdQueue());  // wait for the communication to be clean
 
   requestCommandInfo.stream_handler = NULL;
   requestCommandInfo.inWaitResponse = true;
@@ -70,8 +70,7 @@ void detectAdvancedOk(void)
 
   mustStoreCmd("M105\n");
 
-  // Wait for response
-  waitResponse();
+  waitForResponse();  // wait for response
 
   uint8_t cmd_index = 0;
 
@@ -107,8 +106,7 @@ bool request_M21(void)
 
   mustStoreCmd((infoMachineSettings.multiVolume == ENABLED) ? ((infoFile.onboardSource == BOARD_SD) ? "M21 S\n" : "M21 U\n") : "M21\n");
 
-  // Wait for response
-  waitResponse();
+  waitForResponse();  // wait for response
 
   clearRequestCommandInfo();
 
@@ -129,8 +127,7 @@ char * request_M20(void)
   else
     mustStoreCmd("M20\n");
 
-  // Wait for response
-  waitResponse();
+  waitForResponse();  // wait for response
 
   //clearRequestCommandInfo();  // shall be call after copying the buffer ...
   return requestCommandInfo.cmd_rev_buf;
@@ -155,8 +152,7 @@ char * request_M33(const char * filename)
   else
     mustStoreCmd("M33 %s\n", filename);
 
-  // Wait for response
-  waitResponse();
+  waitForResponse();  // wait for response
 
   //clearRequestCommandInfo();  // shall be call after copying the buffer
   return requestCommandInfo.cmd_rev_buf;
@@ -207,8 +203,7 @@ long request_M23_M36(const char * filename)
     sizeTag = "size\":";  // reprap firmware reports size JSON
   }
 
-  // Wait for response
-  waitResponse();
+  waitForResponse();  // wait for response
 
   if (requestCommandInfo.inError)
   {
@@ -308,5 +303,5 @@ void request_M20_rrf(const char * nextdir, bool with_ts, FP_STREAM_HANDLER handl
 
   mustStoreCmd("M20 S%d P\"/%s\"\n", with_ts ? 3 : 2, nextdir);
 
-  waitResponse();
+  waitForResponse();  // wait for response
 }
