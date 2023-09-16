@@ -24,8 +24,6 @@ const char * const baudrateNames[BAUDRATE_COUNT] = {"OFF", "2400", "9600", "1920
 
 static inline void Serial_InitPrimary(void)
 {
-  setReminderMsg(LABEL_UNCONNECTED, SYS_STATUS_DISCONNECTED);
-
   InfoHost_Init(false);  // initialize infoHost when disconnected
 
   Serial_Config(serialPort[PORT_1].port, serialPort[PORT_1].cacheSize, baudrateValues[infoSettings.serial_port[PORT_1]]);
@@ -146,42 +144,86 @@ uint16_t Serial_GetReadingIndex(SERIAL_PORT_INDEX portIndex)
 
 uint16_t Serial_Get(SERIAL_PORT_INDEX portIndex, char * buf, uint16_t bufSize)
 {
-  // if port index is out of range or no data to read from L1 cache
-  if (!WITHIN(portIndex, PORT_1, SERIAL_PORT_COUNT - 1) || dmaL1Data[portIndex].flag == dmaL1Data[portIndex].wIndex)
+  dmaL1Data[portIndex].wIndex = Serial_GetWritingIndex(portIndex);
+
+  if (dmaL1Data[portIndex].flag == dmaL1Data[portIndex].wIndex)  // if no data to read from L1 cache
     return 0;
 
+  // wIndex: make a static access to dynamically changed (by L1 cache's interrupt handler) variables/attributes
+  //
   DMA_CIRCULAR_BUFFER * dmaL1Data_ptr = &dmaL1Data[portIndex];
-
-  // make a static access to dynamically changed (by L1 cache's interrupt handler) variables/attributes
   uint16_t wIndex = dmaL1Data_ptr->wIndex;
+  uint16_t flag = dmaL1Data_ptr->flag;
+  uint16_t cacheSize = dmaL1Data_ptr->cacheSize;
+  char * cache = dmaL1Data_ptr->cache;
 
-  // L1 cache's reading index (not dynamically changed (by L1 cache's interrupt handler) variables/attributes)
-  uint16_t rIndex = dmaL1Data_ptr->rIndex;
-
-  while (dmaL1Data_ptr->cache[rIndex] == ' ' && rIndex != wIndex)  // remove leading empty space, if any
+  while (cache[flag] != '\n' && flag != wIndex)  // check presence of "\n", if any
   {
-    rIndex = (rIndex + 1) % dmaL1Data_ptr->cacheSize;
+    flag = (flag + 1) % cacheSize;
   }
 
-  for (uint16_t i = 0; i < (bufSize - 1) && rIndex != wIndex; )  // retrieve data until buf is full or L1 cache is empty
+  if (flag != wIndex)  // if "\n" was found, proceed with data copy
   {
-    buf[i] = dmaL1Data_ptr->cache[rIndex];
-    rIndex = (rIndex + 1) % dmaL1Data_ptr->cacheSize;
+    // rIndex: L1 cache's reading index (not dynamically changed (by L1 cache's interrupt handler) variables/attributes)
+    // tailEnd: last index on upper part of L1 cache
+    // headStart: first index on lower part of L1 cache, if any is needed
+    // msgSize: message size. Last +1 is for the terminating null character "\0" (code is optimized by the compiler)
+    //
+    uint16_t rIndex = dmaL1Data_ptr->rIndex;
+    uint16_t tailEnd;
+    uint16_t headStart;
+    uint16_t msgSize;
 
-    if (buf[i++] == '\n')  // if data end marker is found
+    while (cache[rIndex] == ' ' && rIndex != flag)  // remove leading empty space, if any
     {
-      buf[i] = '\0';                                         // end character
-      dmaL1Data_ptr->flag = dmaL1Data_ptr->rIndex = rIndex;  // update queue's custom flag and reading index with rIndex
-
-      return i;  // return the number of bytes stored in buf
+      rIndex = (rIndex + 1) % cacheSize;
     }
+
+    if (rIndex <= flag)
+    {
+      tailEnd = flag;
+      headStart = flag + 1;
+      msgSize = (tailEnd - rIndex + 1) + 1;
+    }
+    else
+    {
+      tailEnd = cacheSize - 1;
+      headStart = 0;
+      msgSize = (tailEnd - rIndex + 1) + (flag + 1) + 1;
+    }
+
+    // update queue's custom flag and reading index with next index
+    dmaL1Data_ptr->flag = dmaL1Data_ptr->rIndex = (flag + 1) % cacheSize;
+
+    // if buf size is not enough to store the data plus the terminating null character "\0", skip the data copy
+    //
+    // NOTE: the following check should never be matched if buf has a proper size and there is no reading error.
+    //       If so, the check could be commented out just to improve performance. Just keep it to make the code more robust
+    //
+    if (bufSize < msgSize)
+      return 0;
+
+    while (rIndex <= tailEnd)  // retrieve data on upper part of L1 cache
+    {
+      *(buf++) = cache[rIndex++];
+    }
+
+    while (headStart <= flag)  // retrieve data on lower part of L1 cache, if any is needed
+    {
+      *(buf++) = cache[headStart++];
+    }
+
+    *buf = '\0';  // end character
+
+    return msgSize;  // return the number of bytes stored in buf
   }
 
   // if here, a partial message is present on the L1 cache (message not terminated by "\n").
   // We temporary skip the message until it is fully received updating also dmaL1Data_ptr->flag to
   // prevent to read again (multiple times) the same partial message on next function invokation
 
-  dmaL1Data_ptr->flag = wIndex;  // update queue's custom flag with wIndex
+  // update queue's custom flag with flag (also equal to wIndex)
+  dmaL1Data_ptr->flag = flag;
 
   return 0;  // return the number of bytes stored in buf
 }
