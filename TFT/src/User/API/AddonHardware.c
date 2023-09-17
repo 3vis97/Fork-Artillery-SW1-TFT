@@ -41,7 +41,7 @@ enum
   FILAMENT_SENSOR_SMART,
 };
 
-static uint32_t nextUpdateTime = 0;
+static uint32_t nextUpdateTime = FIL_ALARM_REMINDER_TIME;  // Give TFT time to connect to mainboard first before polling for runout
 static bool posE_updateWaiting = false;
 static bool sfs_alive = false;  // Use an encoder disc to toggles the runout. Suitable for BigTreeTech Smart Filament Sensor
 
@@ -205,30 +205,22 @@ bool FIL_SmartRunoutDetect(void)
 
 bool FIL_IsRunout(void)
 {
-  if (GET_BIT(infoSettings.runout, RUNOUT_ENABLED))
+  switch (GET_BIT(infoSettings.runout, RUNOUT_SENSOR_TYPE))
   {
-    // Get sensor type
-    uint8_t sensorType = GET_BIT(infoSettings.runout, RUNOUT_SENSOR_TYPE);
+    case FILAMENT_SENSOR_NORMAL:
+      return FIL_NormalRunoutDetect();
 
-    switch (sensorType)
-    {
-      case FILAMENT_SENSOR_NORMAL:
-        return FIL_NormalRunoutDetect();
+    case FILAMENT_SENSOR_SMART:
+      return FIL_SmartRunoutDetect();
 
-      case FILAMENT_SENSOR_SMART:
-        return FIL_SmartRunoutDetect();
-
-      default:
-        return false;
-    }
+    default:
+      return false;
   }
-
-  return false;
 }
 
 void FIL_BE_CheckRunout(void)
 {
-  if (!GET_BIT(infoSettings.runout, 0) || !infoHost.connected)  // Filament runout turn off or TFT not connected to mainboard
+  if (!GET_BIT(infoSettings.runout, RUNOUT_ENABLED))  // Filament runout turned off
     return;
 
   setPrintRunout(FIL_IsRunout());  // Need constant scanning to filter interference
