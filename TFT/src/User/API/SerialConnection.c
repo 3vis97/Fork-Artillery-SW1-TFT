@@ -130,7 +130,6 @@ void Serial_Forward(SERIAL_PORT_INDEX portIndex, const char * msg)
         #endif
         )
       Serial_Put(serialPort[portIndex].port, msg);  // pass on the message to the port
-
   }
 }
 
@@ -144,88 +143,71 @@ uint16_t Serial_GetReadingIndex(SERIAL_PORT_INDEX portIndex)
 
 uint16_t Serial_Get(SERIAL_PORT_INDEX portIndex, char * buf, uint16_t bufSize)
 {
-  dmaL1Data[portIndex].wIndex = Serial_GetWritingIndex(portIndex);
+  // wIndex: update L1 cache's writing index (dynamically changed (by L1 cache's interrupt handler) variables/attributes)
+  //         and make a static access (32 bit) to it to speedup performance on this function
+  //
+  uint32_t wIndex = dmaL1Data[portIndex].wIndex = Serial_GetWritingIndex(portIndex);  // get the latest wIndex
+  uint32_t flag = dmaL1Data[portIndex].flag;                                          // get the current flag position
 
-  if (dmaL1Data[portIndex].flag == dmaL1Data[portIndex].wIndex)  // if no data to read from L1 cache
+  if (flag == wIndex)  // if no data to read from L1 cache, nothing to do
     return 0;
 
-  // wIndex: make a static access to dynamically changed (by L1 cache's interrupt handler) variables/attributes
-  //
-  DMA_CIRCULAR_BUFFER * dmaL1Data_ptr = &dmaL1Data[portIndex];
-  uint16_t wIndex = dmaL1Data_ptr->wIndex;
-  uint16_t flag = dmaL1Data_ptr->flag;
-  uint16_t cacheSize = dmaL1Data_ptr->cacheSize;
-  char * cache = dmaL1Data_ptr->cache;
+  uint32_t cacheSize = dmaL1Data[portIndex].cacheSize;
 
-  while (cache[flag] != '\n' && flag != wIndex)  // check presence of "\n", if any
+  while (dmaL1Data[portIndex].cache[flag] != '\n' && flag != wIndex)  // check presence of "\n" in available data
   {
     flag = (flag + 1) % cacheSize;
   }
 
-  if (flag != wIndex)  // if "\n" was found, proceed with data copy
+  if (flag == wIndex)  // if "\n" was not found (message incomplete), update flag and exit
   {
-    // rIndex: L1 cache's reading index (not dynamically changed (by L1 cache's interrupt handler) variables/attributes)
-    // tailEnd: last index on upper part of L1 cache
-    // headStart: first index on lower part of L1 cache, if any is needed
-    // msgSize: message size. Last +1 is for the terminating null character "\0" (code is optimized by the compiler)
-    //
-    uint16_t rIndex = dmaL1Data_ptr->rIndex;
-    uint16_t tailEnd;
-    uint16_t headStart;
-    uint16_t msgSize;
+    dmaL1Data[portIndex].flag = flag;  // update queue's custom flag with flag (also equal to wIndex)
 
-    while (cache[rIndex] == ' ' && rIndex != flag)  // remove leading empty space, if any
-    {
-      rIndex = (rIndex + 1) % cacheSize;
-    }
-
-    if (rIndex <= flag)
-    {
-      tailEnd = flag;
-      headStart = flag + 1;
-      msgSize = (tailEnd - rIndex + 1) + 1;
-    }
-    else
-    {
-      tailEnd = cacheSize - 1;
-      headStart = 0;
-      msgSize = (tailEnd - rIndex + 1) + (flag + 1) + 1;
-    }
-
-    // update queue's custom flag and reading index with next index
-    dmaL1Data_ptr->flag = dmaL1Data_ptr->rIndex = (flag + 1) % cacheSize;
-
-    // if buf size is not enough to store the data plus the terminating null character "\0", skip the data copy
-    //
-    // NOTE: the following check should never be matched if buf has a proper size and there is no reading error.
-    //       If so, the check could be commented out just to improve performance. Just keep it to make the code more robust
-    //
-    if (bufSize < msgSize)
-      return 0;
-
-    while (rIndex <= tailEnd)  // retrieve data on upper part of L1 cache
-    {
-      *(buf++) = cache[rIndex++];
-    }
-
-    while (headStart <= flag)  // retrieve data on lower part of L1 cache, if any is needed
-    {
-      *(buf++) = cache[headStart++];
-    }
-
-    *buf = '\0';  // end character
-
-    return msgSize;  // return the number of bytes stored in buf
+    return 0;
   }
 
-  // if here, a partial message is present on the L1 cache (message not terminated by "\n").
-  // We temporary skip the message until it is fully received updating also dmaL1Data_ptr->flag to
-  // prevent to read again (multiple times) the same partial message on next function invokation
+  // rIndex: L1 cache's reading index (not dynamically changed (by L1 cache's interrupt handler) variables/attributes)
+  //
+  DMA_CIRCULAR_BUFFER * dmaL1Data_ptr = &dmaL1Data[portIndex];
+  char * cache = dmaL1Data_ptr->cache;
+  uint32_t rIndex = dmaL1Data_ptr->rIndex;
 
-  // update queue's custom flag with flag (also equal to wIndex)
-  dmaL1Data_ptr->flag = flag;
+  while (cache[rIndex] == ' ' && rIndex != flag)  // remove leading empty space, if any
+  {
+    rIndex = (rIndex + 1) % cacheSize;
+  }
 
-  return 0;  // return the number of bytes stored in buf
+  // msgSize: message size (after updating rIndex removing leading empty spaces). Last +1 is for the terminating null character '\0'
+  uint32_t msgSize = (cacheSize + flag - rIndex) % cacheSize + 2;
+
+  // if buf size is not enough to store the data plus the terminating null character "\0", skip the data copy
+  //
+  // NOTE: the following check should never be matched if buf has a proper size and there is no reading error.
+  //       If so, the check could be commented out just to improve performance. Just keep it to make the code more robust
+  //
+  if (bufSize < msgSize)
+    return 0;
+
+  if (rIndex <= flag)  // data is one chunk only, from rIndex to flag
+  {
+    memcpy(buf, &cache[rIndex], msgSize - 1);
+    buf += msgSize - 1;
+  }
+  else  // data at end and beginning of cache
+  {
+    memcpy(buf, &cache[rIndex], cacheSize - rIndex);
+    buf += cacheSize - rIndex;
+
+    memcpy(buf, cache, flag + 1);
+    buf += flag + 1;
+  }
+
+  *buf = '\0';  // add end character
+
+  // update queue's custom flag and reading index with next index
+  dmaL1Data_ptr->flag = dmaL1Data_ptr->rIndex = (flag + 1) % cacheSize;
+
+  return msgSize;  // return the number of bytes stored in buf
 }
 
 #ifdef SERIAL_PORT_2
