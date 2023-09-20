@@ -1,21 +1,26 @@
 #include "SerialConnection.h"
 #include "includes.h"
 
-#define SERIAL_PORT_QUEUE_SIZE   NOBEYOND(512, RAM_SIZE * 64, 4096)
-#define SERIAL_PORT_2_QUEUE_SIZE 512
-#define SERIAL_PORT_3_QUEUE_SIZE 512
-#define SERIAL_PORT_4_QUEUE_SIZE 512
+#define SERIAL_PORT_RX_QUEUE_SIZE   NOBEYOND(512, RAM_SIZE * 64, 4096)
+#define SERIAL_PORT_2_RX_QUEUE_SIZE 512
+#define SERIAL_PORT_3_RX_QUEUE_SIZE 512
+#define SERIAL_PORT_4_RX_QUEUE_SIZE 512
+
+#define SERIAL_PORT_TX_QUEUE_SIZE   256
+#define SERIAL_PORT_2_TX_QUEUE_SIZE 256
+#define SERIAL_PORT_3_TX_QUEUE_SIZE 256
+#define SERIAL_PORT_4_TX_QUEUE_SIZE 256
 
 const SERIAL_PORT_INFO serialPort[SERIAL_PORT_COUNT] = {
-  {SERIAL_PORT, SERIAL_PORT_QUEUE_SIZE, "", "1 - Printer"},
+  {SERIAL_PORT    , SERIAL_PORT_RX_QUEUE_SIZE  , SERIAL_PORT_TX_QUEUE_SIZE  , "" , "1 - Printer"},
   #ifdef SERIAL_PORT_2
-    {SERIAL_PORT_2, SERIAL_PORT_2_QUEUE_SIZE, "2", "2 - WIFI"},
+    {SERIAL_PORT_2, SERIAL_PORT_2_RX_QUEUE_SIZE, SERIAL_PORT_2_TX_QUEUE_SIZE, "2", "2 - Wifi"},
   #endif
   #ifdef SERIAL_PORT_3
-    {SERIAL_PORT_3, SERIAL_PORT_3_QUEUE_SIZE, "3", "3 - UART3"},
+    {SERIAL_PORT_3, SERIAL_PORT_3_RX_QUEUE_SIZE, SERIAL_PORT_3_TX_QUEUE_SIZE, "3", "3 - UART3"},
   #endif
   #ifdef SERIAL_PORT_4
-    {SERIAL_PORT_4, SERIAL_PORT_4_QUEUE_SIZE, "4", "4 - UART4"}
+    {SERIAL_PORT_4, SERIAL_PORT_4_RX_QUEUE_SIZE, SERIAL_PORT_4_TX_QUEUE_SIZE, "4", "4 - UART4"}
   #endif
 };
 
@@ -26,7 +31,7 @@ static inline void Serial_InitPrimary(void)
 {
   InfoHost_Init(false);  // initialize infoHost when disconnected
 
-  Serial_Config(serialPort[PORT_1].port, serialPort[PORT_1].cacheSize, baudrateValues[infoSettings.serial_port[PORT_1]]);
+  Serial_Config(serialPort[PORT_1].port, serialPort[PORT_1].cacheSizeRX, serialPort[PORT_1].cacheSizeTX, baudrateValues[infoSettings.serial_port[PORT_1]]);
 }
 
 static inline void Serial_DeInitPrimary(void)
@@ -53,7 +58,7 @@ void Serial_Init(SERIAL_PORT_INDEX portIndex)
           // Disable the serial port when it is not in use and/or not connected to a device (floating) to
           // avoid to receive and process wrong data due to possible electromagnetic interference (EMI).
           if (infoSettings.serial_port[portIndex] > 0)  // if serial port is enabled
-            Serial_Config(serialPort[portIndex].port, serialPort[portIndex].cacheSize,
+            Serial_Config(serialPort[portIndex].port, serialPort[portIndex].cacheSizeRX, serialPort[portIndex].cacheSizeTX,
                           baudrateValues[infoSettings.serial_port[portIndex]]);
         }
       }
@@ -64,7 +69,7 @@ void Serial_Init(SERIAL_PORT_INDEX portIndex)
     {
       if (infoSettings.serial_port[portIndex] > 0)  // if serial port is enabled
       {
-        Serial_Config(serialPort[portIndex].port, serialPort[portIndex].cacheSize,
+        Serial_Config(serialPort[portIndex].port, serialPort[portIndex].cacheSizeRX, serialPort[portIndex].cacheSizeTX,
                       baudrateValues[infoSettings.serial_port[portIndex]]);
       }
     }
@@ -138,7 +143,7 @@ uint16_t Serial_GetReadingIndex(SERIAL_PORT_INDEX portIndex)
   if (!WITHIN(portIndex, PORT_1, SERIAL_PORT_COUNT - 1))
     return 0;
 
-  return dmaL1Data[portIndex].rIndex;
+  return dmaL1DataRX[portIndex].rIndex;
 }
 
 uint16_t Serial_Get(SERIAL_PORT_INDEX portIndex, char * buf, uint16_t bufSize)
@@ -146,29 +151,29 @@ uint16_t Serial_Get(SERIAL_PORT_INDEX portIndex, char * buf, uint16_t bufSize)
   // wIndex: update L1 cache's writing index (dynamically changed (by L1 cache's interrupt handler) variables/attributes)
   //         and make a static access (32 bit) to it to speedup performance on this function
   //
-  uint32_t wIndex = dmaL1Data[portIndex].wIndex = Serial_GetWritingIndex(portIndex);  // get the latest wIndex
-  uint32_t flag = dmaL1Data[portIndex].flag;                                          // get the current flag position
+  uint32_t wIndex = dmaL1DataRX[portIndex].wIndex = Serial_GetWritingIndex(portIndex);  // get the latest wIndex
+  uint32_t flag = dmaL1DataRX[portIndex].flag;                                          // get the current flag position
 
   if (flag == wIndex)  // if no data to read from L1 cache, nothing to do
     return 0;
 
-  uint32_t cacheSize = dmaL1Data[portIndex].cacheSize;
+  uint32_t cacheSize = dmaL1DataRX[portIndex].cacheSize;
 
-  while (dmaL1Data[portIndex].cache[flag] != '\n' && flag != wIndex)  // check presence of "\n" in available data
+  while (dmaL1DataRX[portIndex].cache[flag] != '\n' && flag != wIndex)  // check presence of "\n" in available data
   {
     flag = (flag + 1) % cacheSize;
   }
 
   if (flag == wIndex)  // if "\n" was not found (message incomplete), update flag and exit
   {
-    dmaL1Data[portIndex].flag = flag;  // update queue's custom flag with flag (also equal to wIndex)
+    dmaL1DataRX[portIndex].flag = flag;  // update queue's custom flag with flag (also equal to wIndex)
 
     return 0;
   }
 
   // rIndex: L1 cache's reading index (not dynamically changed (by L1 cache's interrupt handler) variables/attributes)
   //
-  DMA_CIRCULAR_BUFFER * dmaL1Data_ptr = &dmaL1Data[portIndex];
+  DMA_CIRCULAR_BUFFER * dmaL1Data_ptr = &dmaL1DataRX[portIndex];
   char * cache = dmaL1Data_ptr->cache;
   uint32_t rIndex = dmaL1Data_ptr->rIndex;
 
