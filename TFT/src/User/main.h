@@ -40,7 +40,7 @@ typedef struct
   uint8_t tx_slots;         // keep track of available gcode tx slots (e.g. if ADVANCED_OK feature is enabled on both mainboard and TFT)
   uint8_t tx_count;         // keep track of pending gcode tx count
   bool connected;           // TFT is connected to Marlin
-  bool listeningMode;       // TFT is in listening mode from Marlin
+  bool listening_mode;      // TFT is in listening mode from Marlin
   HOST_STATUS status;       // host is busy in printing execution. (USB serial printing and gcode print from onboard)
 } HOST;
 
@@ -54,6 +54,8 @@ typedef struct
 extern MENU infoMenu;
 extern HOST infoHost;
 extern CLOCKS mcuClocks;
+extern uint32_t bePriorityCounter;
+extern uint32_t fePriorityCounter;
 
 void InfoHost_Init(bool isConnected);
 void InfoHost_UpdateListeningMode(void);

@@ -713,7 +713,7 @@ void loopReminderManage(void)
     else
       setReminderMsg(LABEL_UNCONNECTED, SYS_STATUS_DISCONNECTED);  // set the no printer attached reminder
   }
-  else if (infoHost.listeningMode == true || isWritingMode() == true)
+  else if (infoHost.listening_mode == true || isWritingMode() == true)
   {
     if (reminder.status == SYS_STATUS_LISTENING)  // no change, return
       return;
@@ -1202,6 +1202,8 @@ void loopCheckBackPress(void)
 // Non-UI background loop tasks
 void loopBackEnd(void)
 {
+  UPD_SCAN_RATE();  // debug monitoring KPI
+
   // Handle a print from TFT media, if any
   loopPrintFromTFT();
 
@@ -1220,6 +1222,14 @@ void loopBackEnd(void)
     Serial_GetFromUART();
   #endif
 
+  // Handle USB communication
+  #ifdef USB_FLASH_DRIVE_SUPPORT
+    USB_LoopProcess();
+  #endif
+
+  if ((bePriorityCounter++ & 0x000F) != 0)  // run 6% of the time only
+    return;
+
   // Temperature monitor
   loopCheckHeater();
 
@@ -1237,11 +1247,6 @@ void loopBackEnd(void)
   // Handle a print from (remote) onboard media, if any
   if (infoMachineSettings.onboardSD == ENABLED)
     loopPrintFromOnboard();
-
-  // Handle USB communication
-  #ifdef USB_FLASH_DRIVE_SUPPORT
-    USB_LoopProcess();
-  #endif
 
   // Check filament runout status
   #ifdef FIL_RUNOUT_PIN
@@ -1316,6 +1321,10 @@ void loopFrontEnd(void)
 void loopProcess(void)
 {
   loopBackEnd();
+
+  if ((fePriorityCounter++ & 0x000F) != 0)  // run 6% of the time only
+    return;
+
   loopFrontEnd();
 }
 
