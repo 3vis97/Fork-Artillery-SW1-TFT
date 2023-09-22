@@ -1,15 +1,19 @@
 #include "SerialConnection.h"
 #include "includes.h"
 
-#define SERIAL_PORT_RX_QUEUE_SIZE   NOBEYOND(512, RAM_SIZE * 64, 4096)
-#define SERIAL_PORT_2_RX_QUEUE_SIZE 512
-#define SERIAL_PORT_3_RX_QUEUE_SIZE 512
-#define SERIAL_PORT_4_RX_QUEUE_SIZE 512
+// uncomment this line to use inline copy (fast code) instead of memcpy() (less code)
+#define USE_INLINE_COPY
 
-#define SERIAL_PORT_TX_QUEUE_SIZE   256
-#define SERIAL_PORT_2_TX_QUEUE_SIZE 256
-#define SERIAL_PORT_3_TX_QUEUE_SIZE 256
-#define SERIAL_PORT_4_TX_QUEUE_SIZE 256
+#define SERIAL_PORT_RX_QUEUE_SIZE   NOBEYOND(ACK_CACHE_SIZE, RAM_SIZE * 64, 4 * ACK_CACHE_SIZE)
+#define SERIAL_PORT_2_RX_QUEUE_SIZE ACK_CACHE_SIZE
+#define SERIAL_PORT_3_RX_QUEUE_SIZE ACK_CACHE_SIZE
+#define SERIAL_PORT_4_RX_QUEUE_SIZE ACK_CACHE_SIZE
+
+// make TX queue size simmetric to ACK messages queue size
+#define SERIAL_PORT_TX_QUEUE_SIZE   ACK_CACHE_SIZE
+#define SERIAL_PORT_2_TX_QUEUE_SIZE ACK_CACHE_SIZE
+#define SERIAL_PORT_3_TX_QUEUE_SIZE ACK_CACHE_SIZE
+#define SERIAL_PORT_4_TX_QUEUE_SIZE ACK_CACHE_SIZE
 
 const SERIAL_PORT_INFO serialPort[SERIAL_PORT_COUNT] = {
   {SERIAL_PORT    , SERIAL_PORT_RX_QUEUE_SIZE  , SERIAL_PORT_TX_QUEUE_SIZE  , "" , "1 - Printer"},
@@ -138,42 +142,36 @@ void Serial_Forward(SERIAL_PORT_INDEX portIndex, const char * msg)
   }
 }
 
-uint16_t Serial_GetReadingIndex(SERIAL_PORT_INDEX portIndex)
+uint16_t Serial_Get(uint8_t port, char * buf, uint16_t bufSize)
 {
-  if (!WITHIN(portIndex, PORT_1, SERIAL_PORT_COUNT - 1))
-    return 0;
+  // NOTE: used 32 bit variables for performance reasons (in particular for data copy)
 
-  return dmaL1DataRX[portIndex].rIndex;
-}
-
-uint16_t Serial_Get(SERIAL_PORT_INDEX portIndex, char * buf, uint16_t bufSize)
-{
   // wIndex: update L1 cache's writing index (dynamically changed (by L1 cache's interrupt handler) variables/attributes)
   //         and make a static access (32 bit) to it to speedup performance on this function
   //
-  uint32_t wIndex = dmaL1DataRX[portIndex].wIndex = Serial_GetWritingIndex(portIndex);  // get the latest wIndex
-  uint32_t flag = dmaL1DataRX[portIndex].flag;                                          // get the current flag position
+  uint32_t wIndex = dmaL1DataRX[port].wIndex = Serial_GetWritingIndex(port);  // get the latest wIndex
+  uint32_t flag = dmaL1DataRX[port].flag;                                     // get the current flag position
 
   if (flag == wIndex)  // if no data to read from L1 cache, nothing to do
     return 0;
 
-  uint32_t cacheSize = dmaL1DataRX[portIndex].cacheSize;
+  uint32_t cacheSize = dmaL1DataRX[port].cacheSize;
 
-  while (dmaL1DataRX[portIndex].cache[flag] != '\n' && flag != wIndex)  // check presence of "\n" in available data
+  while (dmaL1DataRX[port].cache[flag] != '\n' && flag != wIndex)  // check presence of "\n" in available data
   {
     flag = (flag + 1) % cacheSize;
   }
 
   if (flag == wIndex)  // if "\n" was not found (message incomplete), update flag and exit
   {
-    dmaL1DataRX[portIndex].flag = flag;  // update queue's custom flag with flag (also equal to wIndex)
+    dmaL1DataRX[port].flag = flag;  // update queue's custom flag with flag (also equal to wIndex)
 
     return 0;
   }
 
   // rIndex: L1 cache's reading index (not dynamically changed (by L1 cache's interrupt handler) variables/attributes)
   //
-  DMA_CIRCULAR_BUFFER * dmaL1Data_ptr = &dmaL1DataRX[portIndex];
+  DMA_CIRCULAR_BUFFER * dmaL1Data_ptr = &dmaL1DataRX[port];
   char * cache = dmaL1Data_ptr->cache;
   uint32_t rIndex = dmaL1Data_ptr->rIndex;
 
@@ -182,32 +180,55 @@ uint16_t Serial_Get(SERIAL_PORT_INDEX portIndex, char * buf, uint16_t bufSize)
     rIndex = (rIndex + 1) % cacheSize;
   }
 
-  // msgSize: message size (after updating rIndex removing leading empty spaces). Last +1 is for the terminating null character '\0'
-  uint32_t msgSize = (cacheSize + flag - rIndex) % cacheSize + 2;
+  // msgSize: message size (after updating rIndex removing leading empty spaces). Terminating null character '\0' not included
+  uint32_t msgSize = (cacheSize + flag - rIndex) % cacheSize + 1;
 
   // if buf size is not enough to store the data plus the terminating null character "\0", skip the data copy
   //
   // NOTE: the following check should never be matched if buf has a proper size and there is no reading error.
   //       If so, the check could be commented out just to improve performance. Just keep it to make the code more robust
   //
-  if (bufSize < msgSize)
+  if (bufSize < (msgSize + 1))  // +1 is for the terminating null character '\0'
     return 0;
 
-  if (rIndex <= flag)  // data is one chunk only, from rIndex to flag
+  // if data is one chunk only, retrieve data from upper part of circular cache
+  if (rIndex <= flag)
   {
-    memcpy(buf, &cache[rIndex], msgSize - 1);
-    buf += msgSize - 1;
+  #ifdef USE_INLINE_COPY
+    while (rIndex <= flag)
+    {
+      *(buf++) = cache[rIndex++];
+    }
+  #else
+    memcpy(buf, &cache[rIndex], msgSize);
+    buf += msgSize;
+  #endif
   }
   else  // data at end and beginning of cache
   {
+  #ifdef USE_INLINE_COPY
+    while (rIndex <= cacheSize)
+    {
+      *(buf++) = cache[rIndex++];
+    }
+
+    rIndex = 0;
+    uint32_t maxIndex = bufSize - (cacheSize - dmaL1Data_ptr->rIndex);  // used dmaL1Data_ptr->rIndex and not rIndex
+
+    while (rIndex < maxIndex)
+    {
+      *(buf++) = cache[rIndex++];
+    }
+  #else
     memcpy(buf, &cache[rIndex], cacheSize - rIndex);
     buf += cacheSize - rIndex;
 
     memcpy(buf, cache, flag + 1);
-    buf += flag + 1;
+    buf += flag;
+  #endif
   }
 
-  *buf = '\0';  // add end character
+  *buf = '\0';  // end character
 
   // update queue's custom flag and reading index with next index
   dmaL1Data_ptr->flag = dmaL1Data_ptr->rIndex = (flag + 1) % cacheSize;

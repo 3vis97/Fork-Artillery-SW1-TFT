@@ -54,6 +54,11 @@ void menuMonitoring(void)
       GUI_RestoreColorDefault();
     }
 
+    if (!isFullCmdQueue())
+//      storeCmd("M118 P0 A1 test\n");
+//      storeCmd("M118 P0 A1 test test test test test test test test test test test test test test test test test\n");
+      storeCmd("M43\n");
+
     loopProcess();
   }
 }
