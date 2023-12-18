@@ -203,7 +203,7 @@ void ackPopupInfo(const char * info)
   }
 }
 
-bool processKnownEcho(void)
+static inline bool processKnownEcho(void)
 {
   bool isKnown = false;
   uint8_t i;
@@ -239,7 +239,7 @@ bool processKnownEcho(void)
   return isKnown;
 }
 
-void hostActionCommands(void)
+static inline void hostActionCommands(void)
 {
   if (ack_seen(":notification "))
   {
@@ -668,6 +668,20 @@ void parseACK(void)
     {
       fanSetCurSpeed(ack_continue_seen("P") ? ack_value() : 0, ack_seen("S") ? ack_value() : 100);
     }
+    // parse M300 sound coming from the host, play on TFT
+    else if (ack_seen("M300"))
+    {
+      uint16_t hz = 260;   // default Marlin tone frequency: 260Hz
+      uint16_t ms = 1000;  // default Marlin tone duration: 1000ms
+
+      if (ack_seen("S"))
+        hz = ack_value();
+
+      if (ack_seen("P"))
+        ms = ack_value();
+
+      Buzzer_TurnOn(hz, ms);  // (freq, duration), process tone by TFT
+    }
     // parse and store M710, controller fan
     else if (ack_starts_with("M710"))
     {
@@ -821,12 +835,12 @@ void parseACK(void)
       popupReminder(DIALOG_TYPE_INFO, (uint8_t *)"Repeatability Test", (uint8_t *)tmpMsg);
     }
     // parse M48, standard deviation
-    else if (ack_seen("Standard Deviation: "))
+    else if (ack_seen("Standard Deviation:"))
     {
       char tmpMsg[100];
       char * dialogMsg = (char *)getDialogMsgStr();
 
-      if (memcmp(dialogMsg, "Mean: ", 6) == 0)
+      if (memcmp(dialogMsg, "Mean:", 6) == 0)
       {
         levelingSetProbedPoint(-1, -1, ack_value());  // save probed Z value
         sprintf(tmpMsg, "%s\nStandard Deviation: %0.5f", dialogMsg, ack_value());
@@ -931,13 +945,20 @@ void parseACK(void)
     else if (ack_seen("Bed X:"))
     {
       float x = ack_value();
-      float y = 0;
 
       if (ack_continue_seen("Y:"))
-        y = ack_value();
+      {
+        float y = ack_value();
 
-      if (ack_continue_seen("Z:"))
-        levelingSetProbedPoint(x, y, ack_value());  // save probed Z value
+        if (ack_continue_seen("Z:"))
+          levelingSetProbedPoint(x, y, ack_value());  // save probed Z value
+      }
+    }
+    // parse G30 coordinate unreachable message
+    else if (ack_seen("Z Probe Past Bed"))
+    {
+      levelingSetProbedPoint(-1, -1, 0);  // cancel waiting for coordinates
+      BUZZER_PLAY(SOUND_ERROR);
     }
     #if DELTA_PROBE_TYPE != 0
       // parse and store Delta calibration settings
@@ -946,10 +967,14 @@ void parseACK(void)
         BUZZER_PLAY(SOUND_SUCCESS);
 
         if (infoMachineSettings.EEPROM == 1)
+        {
           popupDialog(DIALOG_TYPE_SUCCESS, LABEL_DELTA_CONFIGURATION, LABEL_EEPROM_SAVE_INFO,
                       LABEL_CONFIRM, LABEL_CANCEL, saveEepromSettings, NULL, NULL);
+        }
         else
+        {
           popupReminder(DIALOG_TYPE_SUCCESS, LABEL_DELTA_CONFIGURATION, LABEL_PROCESS_COMPLETED);
+        }
       }
     #endif
 
@@ -1217,7 +1242,7 @@ void parseACK(void)
     // parse M115 capability report
     else if (ack_seen("FIRMWARE_NAME:"))
     {
-      uint8_t * string = (uint8_t *)&ack_cache[ack_index];
+      char * string = &ack_cache[ack_index];
       uint16_t string_start = ack_index;
       uint16_t string_end = string_start;
 
@@ -1239,7 +1264,7 @@ void parseACK(void)
 
       if (ack_seen("MACHINE_TYPE:"))
       {
-        string = (uint8_t *)&ack_cache[ack_index];
+        string = &ack_cache[ack_index];
         string_start = ack_index;
 
         if (ack_seen("EXTRUDER_COUNT:"))
@@ -1250,7 +1275,7 @@ void parseACK(void)
           string_end = ack_index - sizeof("EXTRUDER_COUNT:");
         }
 
-        infoSetMachineType(string, string_end - string_start);  // set firmware name
+        infoSetMachineType(string, string_end - string_start);  // set printer name
       }
     }
     else if (ack_starts_with("Cap:"))
